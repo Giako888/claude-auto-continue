@@ -1,0 +1,147 @@
+'use strict';
+const vscode = require('vscode');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { exec } = require('child_process');
+const { parseResetTime, LIMIT_RE } = require('./parser');
+
+const POLL_MS = 5000;
+let timer = null;        // timeout dell'invio programmato
+let pollTimer = null;
+let status;
+let scheduledAt = null;
+const offsets = new Map(); // file -> byte già letti
+let startedAt = Date.now();
+
+const cfg = () => vscode.workspace.getConfiguration('claudeAutoContinue');
+
+function activate(ctx) {
+  status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  status.command = 'claudeAutoContinue.toggle';
+  ctx.subscriptions.push(status);
+
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('claudeAutoContinue.toggle', async () => {
+      await cfg().update('enabled', !cfg().get('enabled'), vscode.ConfigurationTarget.Global);
+      refreshStatus();
+    }),
+    vscode.commands.registerCommand('claudeAutoContinue.sendNow', () => inject()),
+    vscode.commands.registerCommand('claudeAutoContinue.cancel', () => { clearSchedule(); refreshStatus(); }),
+    vscode.commands.registerCommand('claudeAutoContinue.scheduleAt', async () => {
+      const v = await vscode.window.showInputBox({ prompt: 'Orario di reset (HH:MM, 24h)', placeHolder: '15:05',
+        validateInput: s => /^\d{1,2}:\d{2}$/.test(s) ? null : 'Formato HH:MM' });
+      if (!v) return;
+      const [h, m] = v.split(':').map(Number);
+      const t = new Date(); t.setHours(h, m, 0, 0);
+      if (t <= new Date()) t.setDate(t.getDate() + 1);
+      schedule(t);
+    }),
+    vscode.workspace.onDidChangeConfiguration(e => e.affectsConfiguration('claudeAutoContinue') && refreshStatus()),
+  );
+
+  pollTimer = setInterval(poll, POLL_MS);
+  ctx.subscriptions.push({ dispose: () => { clearInterval(pollTimer); clearSchedule(); } });
+  refreshStatus();
+}
+
+function refreshStatus() {
+  if (!cfg().get('enabled')) { status.text = '$(debug-pause) Auto-continua: off'; status.tooltip = 'Clic per attivare'; }
+  else if (scheduledAt) {
+    status.text = `$(clock) Continua alle ${scheduledAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    status.tooltip = 'Invio programmato. Clic per disattivare.';
+  } else { status.text = '$(play-circle) Auto-continua'; status.tooltip = 'In ascolto del limite di Claude Code. Clic per disattivare.'; }
+  status.show();
+}
+
+function clearSchedule() { if (timer) clearTimeout(timer); timer = null; scheduledAt = null; }
+
+function schedule(resetAt) {
+  clearSchedule();
+  const at = new Date(resetAt.getTime() + cfg().get('delaySeconds', 60) * 1000);
+  scheduledAt = at;
+  // setTimeout non regge >24.8 giorni; i limiti sono di ore, ma ricontrolliamo se il PC va in sospensione.
+  const tick = () => {
+    const left = at.getTime() - Date.now();
+    if (left <= 0) { clearSchedule(); inject(); refreshStatus(); return; }
+    timer = setTimeout(tick, Math.min(left, 30000));
+  };
+  tick();
+  refreshStatus();
+  vscode.window.setStatusBarMessage(`Claude Auto Continue: invio alle ${at.toLocaleTimeString()}`, 5000);
+}
+
+function transcriptsRoot() {
+  return cfg().get('transcriptsDir') || path.join(os.homedir(), '.claude', 'projects');
+}
+
+function recentJsonl(root) {
+  const out = [];
+  let dirs;
+  try { dirs = fs.readdirSync(root, { withFileTypes: true }); } catch { return out; }
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    const dir = path.join(root, d.name);
+    let files; try { files = fs.readdirSync(dir); } catch { continue; }
+    for (const f of files) {
+      if (!f.endsWith('.jsonl')) continue;
+      const p = path.join(dir, f);
+      try { const st = fs.statSync(p); if (Date.now() - st.mtimeMs < 6 * 3600e3) out.push({ p, size: st.size }); } catch {}
+    }
+  }
+  return out;
+}
+
+function poll() {
+  if (!cfg().get('enabled')) return;
+  for (const { p, size } of recentJsonl(transcriptsRoot())) {
+    // Al primo avvistamento leggiamo solo la coda (ultimi 64KB), così recuperiamo un limite appena colpito.
+    let from = offsets.has(p) ? offsets.get(p) : Math.max(0, size - 65536);
+    if (size < from) from = 0;
+    if (size === from) { offsets.set(p, size); continue; }
+    let chunk = '';
+    try {
+      const fd = fs.openSync(p, 'r');
+      const buf = Buffer.alloc(size - from);
+      fs.readSync(fd, buf, 0, buf.length, from);
+      fs.closeSync(fd);
+      chunk = buf.toString('utf8');
+    } catch { continue; }
+    offsets.set(p, size);
+    for (const line of chunk.split('\n')) handleLine(line);
+  }
+}
+
+function handleLine(line) {
+  if (!line || !LIMIT_RE.test(line)) return;
+  let rec; try { rec = JSON.parse(line); } catch { return; }
+  const msg = rec && rec.message;
+  if (!msg) return;
+  const content = Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: String(msg.content || '') }];
+  const text = content.filter(c => c && c.type === 'text').map(c => c.text).join('\n');
+  const ref = rec.timestamp ? new Date(rec.timestamp) : new Date();
+  const reset = parseResetTime(text, ref);
+  if (!reset || reset.getTime() + 120000 < Date.now()) return; // già passato
+  if (scheduledAt && Math.abs(scheduledAt.getTime() - reset.getTime() - cfg().get('delaySeconds', 60) * 1000) < 1000) return;
+  schedule(reset);
+}
+
+function inject() {
+  const message = cfg().get('message', 'continua');
+  if (cfg().get('method') === 'terminal') {
+    const term = vscode.window.activeTerminal || vscode.window.terminals[0];
+    if (!term) { vscode.window.showWarningMessage('Claude Auto Continue: nessun terminale aperto.'); return; }
+    term.sendText(message, true);
+    return;
+  }
+  const id = cfg().get('extensionId', 'anthropic.claude-code');
+  const uri = vscode.Uri.parse(`vscode://${id}/open?prompt=${encodeURIComponent(message)}`);
+  vscode.env.openExternal(uri).then(() => {
+    const sub = cfg().get('submitCommand');
+    if (sub) setTimeout(() => exec(sub, err => err && vscode.window.showErrorMessage('submitCommand: ' + err.message)), 1500);
+    else vscode.window.showInformationMessage(`Claude Auto Continue: "${message}" precompilato nella chat — premi Invio (o configura submitCommand).`);
+  });
+}
+
+function deactivate() { clearSchedule(); clearInterval(pollTimer); }
+module.exports = { activate, deactivate };
