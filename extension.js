@@ -144,7 +144,8 @@ function currentTarget() {
 }
 
 // Comandi che l'estensione Claude Code potrebbe esporre per portare il focus sul pannello (barra laterale inclusa).
-const FOCUS_CANDIDATES = ['claude-vscode.focus', 'claude-vscode.sidebar.open', 'claudeVSCodeSidebar.focus', 'claudeVSCodeSidebarSecondary.focus'];
+// 'Open in Side Bar' viene prima: 'Focus Input' (Ctrl+Esc) è un toggle editor<->Claude e potrebbe togliere il focus invece di darlo.
+const FOCUS_CANDIDATES = ['claude-vscode.sidebar.open', 'claude-vscode.focus'];
 
 async function focusChat() {
   const custom = cfg().get('focusCommand');
@@ -157,17 +158,17 @@ async function focusChat() {
 }
 
 // Digita il testo e preme Invio a livello di sistema operativo nella finestra/campo con il focus.
-function typeCommand(text) {
+function typeCommand(text, ctrlEnter) {
   if (process.platform === 'darwin') {
     const t = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    return `osascript -e 'tell application "System Events" to keystroke "${t}"' -e 'tell application "System Events" to key code 36'`;
+    return `osascript -e 'tell application "System Events" to keystroke "${t}"' -e 'tell application "System Events" to key code 36${ctrlEnter ? ' using control down' : ''}'`;
   }
   if (process.platform === 'win32') {
     const t = text.replace(/[+^%~(){}\[\]]/g, m => `{${m}}`).replace(/'/g, "''");
-    return `powershell -NoProfile -c "(New-Object -ComObject WScript.Shell).SendKeys('${t}{ENTER}')"`;
+    return `powershell -NoProfile -c "(New-Object -ComObject WScript.Shell).SendKeys('${t}${ctrlEnter ? '^{ENTER}' : '{ENTER}'}')"`;
   }
   const t = text.replace(/'/g, `'\\''`);
-  return `xdotool type --delay 30 -- '${t}' && xdotool key Return`;
+  return `xdotool type --delay 30 -- '${t}' && xdotool key ${ctrlEnter ? 'ctrl+Return' : 'Return'}`;
 }
 
 function inject() {
@@ -193,7 +194,7 @@ function inject() {
   // chat: porta il focus sul pannello Claude Code già aperto (barra laterale destra compresa), scrive e invia.
   focusChat().then(used => {
     if (!cfg().get('autoSubmit', true)) { vscode.window.showInformationMessage(`Claude Auto Continue: pannello a fuoco (${used}). Scrivi "${message}" e premi Invio.`); return; }
-    const sub = cfg().get('submitCommand') || typeCommand(message);
+    const sub = cfg().get('submitCommand') || typeCommand(message, vscode.workspace.getConfiguration('claudeCode').get('useCtrlEnterToSend', false));
     setTimeout(() => exec(sub, err => err && vscode.window.showErrorMessage('Invio automatico fallito: ' + err.message)), cfg().get('submitDelayMs', 1200));
   }, e => vscode.window.showErrorMessage('Focus sul pannello fallito: ' + e.message));
 }
