@@ -32,6 +32,10 @@
       {
         "command": "claudeAutoContinue.cancel",
         "title": "Claude Auto Continue: Annulla invio programmato"
+      },
+      {
+        "command": "claudeAutoContinue.listCommands",
+        "title": "Claude Auto Continue: Elenca comandi di Claude Code"
       }
     ],
     "configuration": {
@@ -61,17 +65,12 @@
             "terminal"
           ],
           "default": "chat",
-          "description": "chat = apre la conversazione (per ID sessione) nel pannello Claude Code e preme Invio; cli = riprende la stessa sessione con `claude --resume <id> -p` senza usare la UI (più affidabile); terminal = invia al terminale integrato dove gira la CLI."
+          "description": "chat = porta il focus sul pannello Claude Code aperto (anche nella barra laterale destra), scrive il messaggio e preme Invio via OS; cli = riprende la stessa sessione con `claude --resume <id> -p` senza UI (più affidabile); terminal = terminale integrato."
         },
         "claudeAutoContinue.submitCommand": {
           "type": "string",
           "default": "",
-          "description": "Solo method=chat. Comando di shell per premere Invio; vuoto = predefinito per il tuo sistema (xdotool / osascript / PowerShell)."
-        },
-        "claudeAutoContinue.extensionId": {
-          "type": "string",
-          "default": "anthropic.claude-code",
-          "description": "ID dell'estensione Claude Code (per l'URI handler)."
+          "description": "Solo method=chat. Comando di shell che scrive il messaggio e preme Invio; vuoto = predefinito (xdotool / osascript / PowerShell)."
         },
         "claudeAutoContinue.transcriptsDir": {
           "type": "string",
@@ -85,13 +84,18 @@
         },
         "claudeAutoContinue.submitDelayMs": {
           "type": "number",
-          "default": 2500,
+          "default": 1200,
           "description": "Solo method=chat. Attesa prima di premere Invio."
         },
         "claudeAutoContinue.claudePath": {
           "type": "string",
           "default": "",
           "description": "Solo method=cli. Percorso dell'eseguibile `claude` (vuoto = dal PATH)."
+        },
+        "claudeAutoContinue.focusCommand": {
+          "type": "string",
+          "default": "",
+          "description": "Solo method=chat. Comando VS Code che mette a fuoco la chat (vuoto = rilevamento automatico; usa 'Elenca comandi di Claude Code' per trovarlo)."
         }
       }
     }

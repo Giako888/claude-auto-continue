@@ -27,6 +27,11 @@ function activate(ctx) {
       await cfg().update('enabled', !cfg().get('enabled'), vscode.ConfigurationTarget.Global);
       refreshStatus();
     }),
+    vscode.commands.registerCommand('claudeAutoContinue.listCommands', async () => {
+      const all = (await vscode.commands.getCommands(true)).filter(c => /claude|anthropic/i.test(c)).sort();
+      const doc = await vscode.workspace.openTextDocument({ content: all.join('\n') || '(nessun comando trovato)', language: 'plaintext' });
+      vscode.window.showTextDocument(doc);
+    }),
     vscode.commands.registerCommand('claudeAutoContinue.sendNow', () => inject()),
     vscode.commands.registerCommand('claudeAutoContinue.cancel', () => { clearSchedule(); refreshStatus(); }),
     vscode.commands.registerCommand('claudeAutoContinue.scheduleAt', async () => {
@@ -138,10 +143,31 @@ function currentTarget() {
   return best ? { sessionId: path.basename(best.p, '.jsonl') } : null;
 }
 
-function defaultSubmitCommand() {
-  if (process.platform === 'darwin') return `osascript -e 'tell application "System Events" to key code 36'`;
-  if (process.platform === 'win32') return `powershell -NoProfile -c "(New-Object -ComObject WScript.Shell).SendKeys('{ENTER}')"`;
-  return 'xdotool key Return';
+// Comandi che l'estensione Claude Code potrebbe esporre per portare il focus sul pannello (barra laterale inclusa).
+const FOCUS_CANDIDATES = ['claude-vscode.focus', 'claude-vscode.sidebar.open', 'claudeVSCodeSidebar.focus', 'claudeVSCodeSidebarSecondary.focus'];
+
+async function focusChat() {
+  const custom = cfg().get('focusCommand');
+  const all = await vscode.commands.getCommands(true);
+  const cmd = custom || FOCUS_CANDIDATES.find(c => all.includes(c));
+  if (cmd) { await vscode.commands.executeCommand(cmd); return cmd; }
+  // Ripiego: porta il focus sulla barra laterale secondaria (destra) dove di norma sta la chat.
+  await vscode.commands.executeCommand('workbench.action.focusAuxiliaryBar');
+  return 'workbench.action.focusAuxiliaryBar';
+}
+
+// Digita il testo e preme Invio a livello di sistema operativo nella finestra/campo con il focus.
+function typeCommand(text) {
+  if (process.platform === 'darwin') {
+    const t = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return `osascript -e 'tell application "System Events" to keystroke "${t}"' -e 'tell application "System Events" to key code 36'`;
+  }
+  if (process.platform === 'win32') {
+    const t = text.replace(/[+^%~(){}\[\]]/g, m => `{${m}}`).replace(/'/g, "''");
+    return `powershell -NoProfile -c "(New-Object -ComObject WScript.Shell).SendKeys('${t}{ENTER}')"`;
+  }
+  const t = text.replace(/'/g, `'\\''`);
+  return `xdotool type --delay 30 -- '${t}' && xdotool key Return`;
 }
 
 function inject() {
@@ -164,18 +190,12 @@ function inject() {
     cp.on('close', code => vscode.window.showInformationMessage(`Claude Auto Continue (sessione ${t.sessionId.slice(0, 8)}): ${code === 0 ? 'completato' : 'errore ' + code}. ${out.trim().slice(0, 200)}`));
     return;
   }
-  // chat: apre la conversazione indicata dall'ID di sessione (non una nuova) con il prompt precompilato.
-  const id = cfg().get('extensionId', 'anthropic.claude-code');
-  let q = `prompt=${encodeURIComponent(message)}`;
-  if (t) q = `session=${encodeURIComponent(t.sessionId)}&${q}`;
-  vscode.env.openExternal(vscode.Uri.parse(`vscode://${id}/open?${q}`)).then(() => {
-    if (!cfg().get('autoSubmit', true)) {
-      vscode.window.showInformationMessage(`Claude Auto Continue: "${message}" precompilato nella chat — premi Invio.`);
-      return;
-    }
-    const sub = cfg().get('submitCommand') || defaultSubmitCommand();
-    setTimeout(() => exec(sub, err => err && vscode.window.showErrorMessage('Invio automatico fallito (' + sub + '): ' + err.message)), cfg().get('submitDelayMs', 2500));
-  });
+  // chat: porta il focus sul pannello Claude Code già aperto (barra laterale destra compresa), scrive e invia.
+  focusChat().then(used => {
+    if (!cfg().get('autoSubmit', true)) { vscode.window.showInformationMessage(`Claude Auto Continue: pannello a fuoco (${used}). Scrivi "${message}" e premi Invio.`); return; }
+    const sub = cfg().get('submitCommand') || typeCommand(message);
+    setTimeout(() => exec(sub, err => err && vscode.window.showErrorMessage('Invio automatico fallito: ' + err.message)), cfg().get('submitDelayMs', 1200));
+  }, e => vscode.window.showErrorMessage('Focus sul pannello fallito: ' + e.message));
 }
 
 function deactivate() { clearSchedule(); clearInterval(pollTimer); }

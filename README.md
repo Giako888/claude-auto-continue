@@ -21,7 +21,7 @@ Estensione VS Code che, quando Claude Code raggiunge il **limite delle 5 ore**, 
 ## Modalità di invio
 L'estensione ricorda **la sessione che ha colpito il limite** (ID dal transcript) e la usa per l'invio.
 - **`cli`** (la più affidabile): esegue `claude --resume <id-sessione> -p "continua"` nella cartella del progetto, quindi continua esattamente quella conversazione senza toccare la UI. La risposta si vede riaprendo/ricaricando la sessione nel pannello. Imposta `claudeAutoContinue.claudePath` se `claude` non è nel PATH.
-- **`chat`**: apre `vscode://anthropic.claude-code/open?session=<id>&prompt=continua` (cioè la conversazione indicata, non una nuova) e poi preme Invio con un comando di sistema (`autoSubmit`, predefinito: `xdotool key Return` su Linux, `osascript` su macOS, PowerShell su Windows; personalizzabile con `submitCommand`). **Non verificato:** non ho potuto leggere il codice del pannello, quindi il parametro `session` dell'URI è basato su ciò che ricordo; se apre ancora una chat nuova usa `cli`.
+- **`chat`**: mette a fuoco la chat **già aperta** (anche nella barra laterale destra), poi scrive "continua" e preme Invio a livello di sistema (`xdotool` su Linux, `osascript` su macOS, PowerShell su Windows; personalizzabile con `submitCommand`). Non apre chat nuove. Il comando di focus viene rilevato automaticamente; se non parte, esegui *Claude Auto Continue: Elenca comandi di Claude Code* e metti quello giusto in `focusCommand`. Ripiego: `workbench.action.focusAuxiliaryBar`. **Non verificato** sul pannello reale.
 - **`terminal`**: per la CLI `claude` nel terminale integrato: `sendText("continua")` + Invio.
 
 ## Comandi
