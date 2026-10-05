@@ -19,13 +19,10 @@ Estensione VS Code che, quando Claude Code raggiunge il **limite delle 5 ore**, 
 3. Mostra in status bar `Continua alle HH:MM` e, al reset (+ `delaySeconds`, default 60 s), invia il messaggio.
 
 ## Modalità di invio
-- **`terminal`** (consigliata se usi la CLI `claude` nel terminale integrato): `sendText("continua")` + Invio, affidabile.
-- **`chat`** (pannello grafico): l'estensione non ha un'API pubblica per inviare messaggi al pannello, quindi precompila il prompt tramite l'URI handler `vscode://anthropic.claude-code/open?prompt=...` e, se impostato, esegue `submitCommand` per premere Invio a livello di OS:
-  - Linux: `xdotool key Return`
-  - macOS: `osascript -e 'tell application "System Events" to key code 36'`
-  - Windows: `powershell -c "(New-Object -ComObject WScript.Shell).SendKeys('{ENTER}')"`
-
-> Non ho potuto testare l'integrazione con il pannello Claude Code in questo ambiente (nessun VS Code/Claude Code): verifica la modalità `chat` sulla tua macchina. Il parser dell'orario è coperto da `node test.js`.
+L'estensione ricorda **la sessione che ha colpito il limite** (ID dal transcript) e la usa per l'invio.
+- **`cli`** (la più affidabile): esegue `claude --resume <id-sessione> -p "continua"` nella cartella del progetto, quindi continua esattamente quella conversazione senza toccare la UI. La risposta si vede riaprendo/ricaricando la sessione nel pannello. Imposta `claudeAutoContinue.claudePath` se `claude` non è nel PATH.
+- **`chat`**: apre `vscode://anthropic.claude-code/open?session=<id>&prompt=continua` (cioè la conversazione indicata, non una nuova) e poi preme Invio con un comando di sistema (`autoSubmit`, predefinito: `xdotool key Return` su Linux, `osascript` su macOS, PowerShell su Windows; personalizzabile con `submitCommand`). **Non verificato:** non ho potuto leggere il codice del pannello, quindi il parametro `session` dell'URI è basato su ciò che ricordo; se apre ancora una chat nuova usa `cli`.
+- **`terminal`**: per la CLI `claude` nel terminale integrato: `sendText("continua")` + Invio.
 
 ## Comandi
 Auto-continua attiva/disattiva · Programma invio a un orario · Invia ora · Annulla.

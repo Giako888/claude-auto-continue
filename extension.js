@@ -3,7 +3,7 @@ const vscode = require('vscode');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const { parseResetTime, LIMIT_RE } = require('./parser');
 
 const POLL_MS = 5000;
@@ -11,6 +11,7 @@ let timer = null;        // timeout dell'invio programmato
 let pollTimer = null;
 let status;
 let scheduledAt = null;
+let target = null;       // { sessionId, cwd } della sessione che ha colpito il limite
 const offsets = new Map(); // file -> byte già letti
 let startedAt = Date.now();
 
@@ -63,7 +64,7 @@ function schedule(resetAt) {
   // setTimeout non regge >24.8 giorni; i limiti sono di ore, ma ricontrolliamo se il PC va in sospensione.
   const tick = () => {
     const left = at.getTime() - Date.now();
-    if (left <= 0) { clearSchedule(); inject(); refreshStatus(); return; }
+    if (left <= 0) { clearSchedule(); inject(); target = null; refreshStatus(); return; }
     timer = setTimeout(tick, Math.min(left, 30000));
   };
   tick();
@@ -108,11 +109,11 @@ function poll() {
       chunk = buf.toString('utf8');
     } catch { continue; }
     offsets.set(p, size);
-    for (const line of chunk.split('\n')) handleLine(line);
+    for (const line of chunk.split('\n')) handleLine(line, p);
   }
 }
 
-function handleLine(line) {
+function handleLine(line, file) {
   if (!line || !LIMIT_RE.test(line)) return;
   let rec; try { rec = JSON.parse(line); } catch { return; }
   const msg = rec && rec.message;
@@ -123,23 +124,57 @@ function handleLine(line) {
   const reset = parseResetTime(text, ref);
   if (!reset || reset.getTime() + 120000 < Date.now()) return; // già passato
   if (scheduledAt && Math.abs(scheduledAt.getTime() - reset.getTime() - cfg().get('delaySeconds', 60) * 1000) < 1000) return;
+  target = { sessionId: rec.sessionId || path.basename(file, '.jsonl'), cwd: rec.cwd };
   schedule(reset);
+}
+
+// Sessione che ha colpito il limite; in mancanza (invio manuale) la più recente su disco.
+function currentTarget() {
+  if (target) return target;
+  let best;
+  for (const f of recentJsonl(transcriptsRoot())) {
+    try { const m = fs.statSync(f.p).mtimeMs; if (!best || m > best.m) best = { m, p: f.p }; } catch {}
+  }
+  return best ? { sessionId: path.basename(best.p, '.jsonl') } : null;
+}
+
+function defaultSubmitCommand() {
+  if (process.platform === 'darwin') return `osascript -e 'tell application "System Events" to key code 36'`;
+  if (process.platform === 'win32') return `powershell -NoProfile -c "(New-Object -ComObject WScript.Shell).SendKeys('{ENTER}')"`;
+  return 'xdotool key Return';
 }
 
 function inject() {
   const message = cfg().get('message', 'continua');
-  if (cfg().get('method') === 'terminal') {
+  const method = cfg().get('method');
+  const t = currentTarget();
+  if (method === 'terminal') {
     const term = vscode.window.activeTerminal || vscode.window.terminals[0];
     if (!term) { vscode.window.showWarningMessage('Claude Auto Continue: nessun terminale aperto.'); return; }
     term.sendText(message, true);
     return;
   }
+  if (method === 'cli') {
+    // Riprende esattamente la sessione che ha colpito il limite, senza passare dalla UI.
+    if (!t) { vscode.window.showWarningMessage('Claude Auto Continue: sessione non trovata.'); return; }
+    const bin = cfg().get('claudePath') || 'claude';
+    const cp = spawn(bin, ['--resume', t.sessionId, '-p', message], { cwd: t.cwd && fs.existsSync(t.cwd) ? t.cwd : undefined, shell: process.platform === 'win32' });
+    let out = ''; cp.stdout.on('data', d => out += d); cp.stderr.on('data', d => out += d);
+    cp.on('error', e => vscode.window.showErrorMessage('claude CLI: ' + e.message));
+    cp.on('close', code => vscode.window.showInformationMessage(`Claude Auto Continue (sessione ${t.sessionId.slice(0, 8)}): ${code === 0 ? 'completato' : 'errore ' + code}. ${out.trim().slice(0, 200)}`));
+    return;
+  }
+  // chat: apre la conversazione indicata dall'ID di sessione (non una nuova) con il prompt precompilato.
   const id = cfg().get('extensionId', 'anthropic.claude-code');
-  const uri = vscode.Uri.parse(`vscode://${id}/open?prompt=${encodeURIComponent(message)}`);
-  vscode.env.openExternal(uri).then(() => {
-    const sub = cfg().get('submitCommand');
-    if (sub) setTimeout(() => exec(sub, err => err && vscode.window.showErrorMessage('submitCommand: ' + err.message)), 1500);
-    else vscode.window.showInformationMessage(`Claude Auto Continue: "${message}" precompilato nella chat — premi Invio (o configura submitCommand).`);
+  let q = `prompt=${encodeURIComponent(message)}`;
+  if (t) q = `session=${encodeURIComponent(t.sessionId)}&${q}`;
+  vscode.env.openExternal(vscode.Uri.parse(`vscode://${id}/open?${q}`)).then(() => {
+    if (!cfg().get('autoSubmit', true)) {
+      vscode.window.showInformationMessage(`Claude Auto Continue: "${message}" precompilato nella chat — premi Invio.`);
+      return;
+    }
+    const sub = cfg().get('submitCommand') || defaultSubmitCommand();
+    setTimeout(() => exec(sub, err => err && vscode.window.showErrorMessage('Invio automatico fallito (' + sub + '): ' + err.message)), cfg().get('submitDelayMs', 2500));
   });
 }
 

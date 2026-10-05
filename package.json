@@ -5,36 +5,94 @@
   "version": "0.1.0",
   "publisher": "local",
   "license": "MIT",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "main": "./extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "commands": [
-      { "command": "claudeAutoContinue.toggle", "title": "Claude Auto Continue: Attiva/Disattiva" },
-      { "command": "claudeAutoContinue.scheduleAt", "title": "Claude Auto Continue: Programma invio a un orario..." },
-      { "command": "claudeAutoContinue.sendNow", "title": "Claude Auto Continue: Invia ora" },
-      { "command": "claudeAutoContinue.cancel", "title": "Claude Auto Continue: Annulla invio programmato" }
+      {
+        "command": "claudeAutoContinue.toggle",
+        "title": "Claude Auto Continue: Attiva/Disattiva"
+      },
+      {
+        "command": "claudeAutoContinue.scheduleAt",
+        "title": "Claude Auto Continue: Programma invio a un orario..."
+      },
+      {
+        "command": "claudeAutoContinue.sendNow",
+        "title": "Claude Auto Continue: Invia ora"
+      },
+      {
+        "command": "claudeAutoContinue.cancel",
+        "title": "Claude Auto Continue: Annulla invio programmato"
+      }
     ],
     "configuration": {
       "title": "Claude Auto Continue",
       "properties": {
-        "claudeAutoContinue.enabled": { "type": "boolean", "default": true, "description": "Rileva automaticamente il limite e programma l'invio." },
-        "claudeAutoContinue.message": { "type": "string", "default": "continua", "description": "Testo da inviare al ripristino del limite." },
-        "claudeAutoContinue.delaySeconds": { "type": "number", "default": 60, "minimum": 0, "description": "Secondi di attesa dopo l'orario di reset prima di inviare." },
+        "claudeAutoContinue.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Rileva automaticamente il limite e programma l'invio."
+        },
+        "claudeAutoContinue.message": {
+          "type": "string",
+          "default": "continua",
+          "description": "Testo da inviare al ripristino del limite."
+        },
+        "claudeAutoContinue.delaySeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "description": "Secondi di attesa dopo l'orario di reset prima di inviare."
+        },
         "claudeAutoContinue.method": {
           "type": "string",
-          "enum": ["chat", "terminal"],
+          "enum": [
+            "chat",
+            "cli",
+            "terminal"
+          ],
           "default": "chat",
-          "description": "chat = pannello Claude Code (precompila via URI, invio con submitCommand); terminal = terminale integrato dove gira la CLI `claude` (invio diretto, affidabile)."
+          "description": "chat = apre la conversazione (per ID sessione) nel pannello Claude Code e preme Invio; cli = riprende la stessa sessione con `claude --resume <id> -p` senza usare la UI (più affidabile); terminal = invia al terminale integrato dove gira la CLI."
         },
         "claudeAutoContinue.submitCommand": {
           "type": "string",
           "default": "",
-          "description": "Solo method=chat. Comando di shell eseguito dopo la precompilazione per premere Invio (es. Linux: `xdotool key Return`; macOS: `osascript -e 'tell application \"System Events\" to key code 36'`; Windows: `powershell -c \"(New-Object -ComObject WScript.Shell).SendKeys('{ENTER}')\"`)."
+          "description": "Solo method=chat. Comando di shell per premere Invio; vuoto = predefinito per il tuo sistema (xdotool / osascript / PowerShell)."
         },
-        "claudeAutoContinue.extensionId": { "type": "string", "default": "anthropic.claude-code", "description": "ID dell'estensione Claude Code (per l'URI handler)." },
-        "claudeAutoContinue.transcriptsDir": { "type": "string", "default": "", "description": "Cartella dei transcript di Claude Code. Vuoto = ~/.claude/projects." }
+        "claudeAutoContinue.extensionId": {
+          "type": "string",
+          "default": "anthropic.claude-code",
+          "description": "ID dell'estensione Claude Code (per l'URI handler)."
+        },
+        "claudeAutoContinue.transcriptsDir": {
+          "type": "string",
+          "default": "",
+          "description": "Cartella dei transcript di Claude Code. Vuoto = ~/.claude/projects."
+        },
+        "claudeAutoContinue.autoSubmit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Solo method=chat. Preme Invio dopo la precompilazione (richiede xdotool su Linux; su macOS serve il permesso Accessibilità)."
+        },
+        "claudeAutoContinue.submitDelayMs": {
+          "type": "number",
+          "default": 2500,
+          "description": "Solo method=chat. Attesa prima di premere Invio."
+        },
+        "claudeAutoContinue.claudePath": {
+          "type": "string",
+          "default": "",
+          "description": "Solo method=cli. Percorso dell'eseguibile `claude` (vuoto = dal PATH)."
+        }
       }
     }
   }
